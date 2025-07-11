@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inventory Management Kiosk</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Chosen Palette: Slate Gray & Indigo Blue -->
+    <!-- 
+      Application Structure Plan: 
+      The SPA is structured with a primary navigation header to switch between two main views: "User Kiosk" and "Admin Panel". This task-oriented design was chosen to provide a clear and distinct interface for each user role, preventing confusion. 
+      - The User Kiosk is a simple, full-screen form designed for quick transactions.
+      - The Admin Panel uses a multi-section layout with distinct cards for managing Users, Items, Vehicles, and generating Reports. This categorizes administrative tasks logically, making the panel intuitive to navigate.
+      State is managed in a single JavaScript object persisted in localStorage to simulate a database within this single-file application. UI updates are triggered by data changes, ensuring consistency across the views.
+    -->
+    <!-- 
+      Visualization & Content Choices: 
+      The application primarily uses structured HTML tables and forms, which is the most effective way to display and manage the list-based data (users, items, vehicles) specified in the report.
+      - Goal: Inform/Manage -> Method: HTML Tables with Add/Edit/Delete buttons. Justification: This is the standard and most user-friendly UI pattern for CRUD (Create, Read, Update, Delete) operations on lists of data.
+      - Goal: User Transaction -> Method: HTML Form with dynamic dropdowns. Justification: Provides a guided and error-resistant way for users to perform checkouts. The quantity input is dynamically constrained by availability, improving usability.
+      - Goal: Reporting -> Method: JS-generated CSV file download. Justification: This directly meets the requirement for downloadable reports in a universally compatible format.
+      No charts were necessary as the requirements focus on inventory management and transactions, not data analysis or visualization. Library/Method: Vanilla JS for all logic and DOM manipulation.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9; /* slate-100 */
+        }
+        @import url('https://rsms.me/inter/inter.css');
+        .view { display: none; }
+        .view.active { display: block; }
+        .modal-overlay {
+            transition: opacity 0.3s ease;
+        }
+    </style>
+</head>
+<body class="text-slate-800">
+
+    <header class="bg-slate-800 shadow-md sticky top-0 z-40">
+        <nav class="container mx-auto px-4 py-3 flex justify-center items-center">
+            <div class="bg-slate-700 p-1 rounded-lg">
+                <button id="user-view-btn" class="px-4 py-2 text-lg font-semibold rounded-md text-white transition-colors duration-300">User Kiosk</button>
+                <button id="admin-view-btn" class="px-4 py-2 text-lg font-semibold rounded-md text-white transition-colors duration-300">Admin Panel</button>
+            </div>
+        </nav>
+    </header>
+
+    <main class="container mx-auto p-4 md:p-8">
+        <!-- User Kiosk View -->
+        <div id="user-view" class="view">
+            <div class="max-w-2xl mx-auto bg-white p-8 rounded-xl shadow-lg">
+                <h1 class="text-3xl font-bold text-center mb-6 text-slate-900">Checkout Materials</h1>
+                <form id="checkout-form" class="space-y-6">
+                    <div>
+                        <label for="user-select" class="block text-sm font-medium text-slate-700 mb-1">User Name</label>
+                        <select id="user-select" class="w-full p-3 border border-slate-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"></select>
+                    </div>
+                    <div>
+                        <label for="item-select" class="block text-sm font-medium text-slate-700 mb-1">Material</label>
+                        <select id="item-select" class="w-full p-3 border border-slate-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"></select>
+                    </div>
+                    <div>
+                        <label for="vehicle-select" class="block text-sm font-medium text-slate-700 mb-1">Vehicle Number</label>
+                        <select id="vehicle-select" class="w-full p-3 border border-slate-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"></select>
+                    </div>
+                    <div>
+                        <label for="quantity-input" class="block text-sm font-medium text-slate-700 mb-1">Quantity</label>
+                        <input type="number" id="quantity-input" min="1" class="w-full p-3 border border-slate-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition" placeholder="0">
+                        <p id="availability-text" class="text-xs text-slate-500 mt-1"></p>
+                    </div>
+                    <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-transform transform hover:scale-105">Checkout</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Admin Panel View -->
+        <div id="admin-view" class="view">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- Manage Items -->
+                <div class="bg-white p-6 rounded-xl shadow-lg">
+                    <h2 class="text-2xl font-bold mb-4">Manage Items</h2>
+                    <form id="add-item-form" class="flex gap-2 mb-4">
+                        <input type="text" id="item-name-input" placeholder="Item Name" class="flex-grow p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" required>
+                        <input type="number" id="item-quantity-input" placeholder="Qty" min="0" class="w-20 p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" required>
+                        <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-indigo-700">+</button>
+                    </form>
+                    <div id="item-list" class="space-y-2 max-h-80 overflow-y-auto"></div>
+                </div>
+
+                <!-- Manage Users & Vehicles -->
+                <div class="space-y-8">
+                    <div class="bg-white p-6 rounded-xl shadow-lg">
+                        <h2 class="text-2xl font-bold mb-4">Manage Users</h2>
+                        <form id="add-user-form" class="flex gap-2 mb-4">
+                            <input type="text" id="user-name-input" placeholder="User Name" class="flex-grow p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" required>
+                            <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-indigo-700">+</button>
+                        </form>
+                        <div id="user-list" class="space-y-2 max-h-40 overflow-y-auto"></div>
+                    </div>
+
+                    <div class="bg-white p-6 rounded-xl shadow-lg">
+                        <h2 class="text-2xl font-bold mb-4">Manage Vehicles</h2>
+                        <form id="add-vehicle-form" class="flex gap-2 mb-4">
+                            <input type="text" id="vehicle-number-input" placeholder="Vehicle Number" class="flex-grow p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500" required>
+                            <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-indigo-700">+</button>
+                        </form>
+                        <div id="vehicle-list" class="space-y-2 max-h-40 overflow-y-auto"></div>
+                    </div>
+                </div>
+
+                 <!-- Reports -->
+                <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg">
+                    <h2 class="text-2xl font-bold mb-4">Reports</h2>
+                    <div class="flex flex-col sm:flex-row gap-4">
+                        <button id="download-transactions-btn" class="flex-1 bg-teal-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-teal-700 transition">Download Transaction Report</button>
+                        <button id="download-inventory-btn" class="flex-1 bg-sky-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-sky-700 transition">Download Inventory Report</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Message Modal -->
+    <div id="message-modal" class="modal-overlay fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 hidden opacity-0">
+        <div id="message-modal-content" class="bg-white max-w-sm w-full p-6 rounded-xl shadow-2xl text-center transform scale-95 transition-transform duration-300">
+            <p id="message-text" class="text-lg mb-4"></p>
+            <button id="message-ok-btn" class="bg-indigo-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-indigo-700">OK</button>
+        </div>
+    </div>
+
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // State management
+    let state = {
+        users: [],
+        items: [],
+        vehicles: [],
+        transactions: [],
+        activeView: 'user'
+    };
+
+    // UI Elements
+    const views = {
+        user: document.getElementById('user-view'),
+        admin: document.getElementById('admin-view')
+    };
+    const navButtons = {
+        user: document.getElementById('user-view-btn'),
+        admin: document.getElementById('admin-view-btn')
+    };
+
+    const userSelect = document.getElementById('user-select');
+    const itemSelect = document.getElementById('item-select');
+    const vehicleSelect = document.getElementById('vehicle-select');
+    const quantityInput = document.getElementById('quantity-input');
+    const availabilityText = document.getElementById('availability-text');
+
+    const checkoutForm = document.getElementById('checkout-form');
+    const addItemForm = document.getElementById('add-item-form');
+    const addUserForm = document.getElementById('add-user-form');
+    const addVehicleForm = document.getElementById('add-vehicle-form');
+    
+    const itemList = document.getElementById('item-list');
+    const userList = document.getElementById('user-list');
+    const vehicleList = document.getElementById('vehicle-list');
+
+    const downloadTransactionsBtn = document.getElementById('download-transactions-btn');
+    const downloadInventoryBtn = document.getElementById('download-inventory-btn');
+
+    const messageModal = document.getElementById('message-modal');
+    const messageModalContent = document.getElementById('message-modal-content');
+    const messageText = document.getElementById('message-text');
+    const messageOkBtn = document.getElementById('message-ok-btn');
+
+    // Data persistence
+    const loadState = () => {
+        const savedState = localStorage.getItem('inventoryKioskState');
+        if (savedState) {
+            state = JSON.parse(savedState);
+        } else {
+            // Initialize with some default data if nothing is saved
+            state = {
+                users: [{id: 1, name: 'John Doe'}, {id: 2, name: 'Jane Smith'}],
+                items: [{id: 1, name: 'White Paint', quantity: 25}, {id: 2, name: 'Brushes (pack)', quantity: 50}],
+                vehicles: [{id: 1, number: 'TRK-001'}, {id: 2, number: 'VAN-102'}],
+                transactions: [],
+                activeView: 'user'
+            };
+            saveState();
+        }
+    };
+
+    const saveState = () => {
+        localStorage.setItem('inventoryKioskState', JSON.stringify(state));
+    };
+    
+    // Utility functions
+    const showMessage = (message) => {
+        messageText.textContent = message;
+        messageModal.classList.remove('hidden');
+        setTimeout(() => {
+            messageModal.classList.remove('opacity-0');
+            messageModalContent.classList.remove('scale-95');
+        }, 10);
+    };
+
+    const hideMessage = () => {
+        messageModal.classList.add('opacity-0');
+        messageModalContent.classList.add('scale-95');
+        setTimeout(() => messageModal.classList.add('hidden'), 300);
+    };
+
+    const generateId = () => Date.now();
+
+    const downloadCSV = (csvContent, filename) => {
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", filename);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    // Render functions
+    const render = () => {
+        // Switch view
+        Object.values(views).forEach(v => v.classList.remove('active'));
+        views[state.activeView].classList.add('active');
+        
+        Object.values(navButtons).forEach(b => b.classList.remove('bg-indigo-600'));
+        navButtons[state.activeView].classList.add('bg-indigo-600');
+
+        // Populate dropdowns
+        const populateSelect = (element, data, placeholder) => {
+            element.innerHTML = `<option value="">${placeholder}</option>`;
+            data.forEach(item => {
+                const option = document.createElement('option');
+                option.value = item.id;
+                option.textContent = item.name || item.number;
+                element.appendChild(option);
+            });
+        };
+
+        populateSelect(userSelect, state.users, 'Select a user');
+        populateSelect(itemSelect, state.items.filter(i => i.quantity > 0), 'Select a material');
+        populateSelect(vehicleSelect, state.vehicles, 'Select a vehicle');
+
+        updateAvailability();
+        
+        // Render lists for admin panel
+        const renderList = (element, data, deleteHandler, editHandler) => {
+            element.innerHTML = '';
+            if (data.length === 0) {
+                element.innerHTML = `<p class="text-slate-500 text-center">No items yet.</p>`;
+                return;
+            }
+            data.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'flex items-center justify-between bg-slate-100 p-2 rounded-lg';
+                let content = `<span class="font-medium">${item.name || item.number}</span>`;
+                if(typeof item.quantity !== 'undefined') {
+                    content += editHandler && editHandler.isEditing(item.id) 
+                        ? ` <input type="number" value="${item.quantity}" min="0" class="w-20 p-1 border rounded" data-id="${item.id}" data-role="quantity-editor">`
+                        : ` <span class="text-sm bg-slate-200 text-slate-600 font-semibold px-2 py-1 rounded-full">${item.quantity}</span>`;
+                }
+                
+                div.innerHTML = `<div>${content}</div>`;
+
+                const buttonsDiv = document.createElement('div');
+                buttonsDiv.className = 'flex gap-2';
+                
+                if (editHandler) {
+                    const editButton = document.createElement('button');
+                    editButton.className = 'text-blue-600 hover:text-blue-800 font-semibold';
+                    editButton.textContent = editHandler.isEditing(item.id) ? 'Save' : 'Edit';
+                    editButton.onclick = () => editHandler.toggle(item.id);
+                    buttonsDiv.appendChild(editButton);
+                }
+
+                const deleteButton = document.createElement('button');
+                deleteButton.className = 'text-red-500 hover:text-red-700 font-semibold';
+                deleteButton.textContent = 'Del';
+                deleteButton.onclick = () => deleteHandler(item.id);
+                buttonsDiv.appendChild(deleteButton);
+
+                div.appendChild(buttonsDiv);
+                element.appendChild(div);
+            });
+        };
+
+        let editingItemId = null;
+        const itemEditHandler = {
+            isEditing: (id) => id === editingItemId,
+            toggle: (id) => {
+                if (editingItemId === id) { // It's a save action
+                    const input = document.querySelector(`input[data-role='quantity-editor'][data-id='${id}']`);
+                    if (input) {
+                        const newQuantity = parseInt(input.value);
+                        const itemIndex = state.items.findIndex(i => i.id === id);
+                        if (itemIndex !== -1 && !isNaN(newQuantity)) {
+                            state.items[itemIndex].quantity = newQuantity;
+                            editingItemId = null;
+                            saveAndRender();
+                        }
+                    }
+                } else {
+                    editingItemId = id;
+                    render();
+                }
+            }
+        };
+
+        renderList(itemList, state.items, deleteItem, itemEditHandler);
+        renderList(userList, state.users, deleteUser);
+        renderList(vehicleList, state.vehicles, deleteVehicle);
+    };
+    
+    const saveAndRender = () => {
+        saveState();
+        render();
+    };
+    
+    const updateAvailability = () => {
+        const selectedItemId = itemSelect.value;
+        if (selectedItemId) {
+            const item = state.items.find(i => i.id == selectedItemId);
+            if (item) {
+                availabilityText.textContent = `Available: ${item.quantity}`;
+                quantityInput.max = item.quantity;
+            }
+        } else {
+            availabilityText.textContent = '';
+            quantityInput.max = 9999;
+        }
+    };
+
+    // Event handlers
+    navButtons.user.addEventListener('click', () => { state.activeView = 'user'; saveAndRender(); });
+    navButtons.admin.addEventListener('click', () => { state.activeView = 'admin'; saveAndRender(); });
+    
+    itemSelect.addEventListener('change', updateAvailability);
+
+    messageOkBtn.addEventListener('click', hideMessage);
+
+    checkoutForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const userId = userSelect.value;
+        const itemId = itemSelect.value;
+        const vehicleId = vehicleSelect.value;
+        const quantity = parseInt(quantityInput.value);
+
+        if (!userId || !itemId || !vehicleId || isNaN(quantity) || quantity <= 0) {
+            showMessage('Please fill out all fields and enter a valid quantity.');
+            return;
+        }
+        
+        const itemIndex = state.items.findIndex(i => i.id == itemId);
+        if (itemIndex === -1) {
+            showMessage('Selected item not found.');
+            return;
+        }
+        
+        const item = state.items[itemIndex];
+        if (item.quantity < quantity) {
+            showMessage(`Not enough stock. Only ${item.quantity} available.`);
+            return;
+        }
+
+        item.quantity -= quantity;
+        const user = state.users.find(u => u.id == userId);
+        const vehicle = state.vehicles.find(v => v.id == vehicleId);
+        
+        state.transactions.push({
+            id: generateId(),
+            userId: user.id,
+            userName: user.name,
+            itemId: item.id,
+            itemName: item.name,
+            vehicleId: vehicle.id,
+            vehicleNumber: vehicle.number,
+            quantity: quantity,
+            timestamp: new Date().toISOString()
+        });
+        
+        checkoutForm.reset();
+        showMessage('Checkout successful!');
+        saveAndRender();
+    });
+
+    addUserForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const nameInput = document.getElementById('user-name-input');
+        const name = nameInput.value.trim();
+        if (name) {
+            state.users.push({ id: generateId(), name });
+            nameInput.value = '';
+            saveAndRender();
+        }
+    });
+
+    addVehicleForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const numberInput = document.getElementById('vehicle-number-input');
+        const number = numberInput.value.trim();
+        if (number) {
+            state.vehicles.push({ id: generateId(), number });
+            numberInput.value = '';
+            saveAndRender();
+        }
+    });
+
+    addItemForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const nameInput = document.getElementById('item-name-input');
+        const quantityInput = document.getElementById('item-quantity-input');
+        const name = nameInput.value.trim();
+        const quantity = parseInt(quantityInput.value);
+
+        if (name && !isNaN(quantity) && quantity >= 0) {
+            state.items.push({ id: generateId(), name, quantity });
+            nameInput.value = '';
+            quantityInput.value = '';
+            saveAndRender();
+        }
+    });
+
+    const deleteUser = (id) => {
+        state.users = state.users.filter(u => u.id !== id);
+        saveAndRender();
+    };
+
+    const deleteVehicle = (id) => {
+        state.vehicles = state.vehicles.filter(v => v.id !== id);
+        saveAndRender();
+    };
+
+    const deleteItem = (id) => {
+        state.items = state.items.filter(i => i.id !== id);
+        saveAndRender();
+    };
+    
+    downloadTransactionsBtn.addEventListener('click', () => {
+        let csv = 'Transaction ID,Timestamp,User Name,Item Name,Quantity,Vehicle Number\n';
+        state.transactions.forEach(t => {
+            csv += `${t.id},${new Date(t.timestamp).toLocaleString()},"${t.userName}","${t.itemName}",${t.quantity},"${t.vehicleNumber}"\n`;
+        });
+        downloadCSV(csv, 'transaction-report.csv');
+    });
+
+    downloadInventoryBtn.addEventListener('click', () => {
+        let csv = 'Item Name,Quantity\n';
+        state.items.forEach(i => {
+            csv += `"${i.name}",${i.quantity}\n`;
+        });
+        downloadCSV(csv, 'inventory-report.csv');
+    });
+
+    // Initial load
+    loadState();
+    render();
+});
+</script>
+</body>
+</html>
